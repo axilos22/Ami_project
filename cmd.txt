@@ -1,0 +1,1 @@
+make micaz intall,1
