@@ -55,8 +55,8 @@ implementation
 		call SerialControl.start();
 		
 		//call SendingTimer.startPeriodic( 2000 ); //sending every 2sec
-		//call SleepTimer.startPeriodic(10000);//sleeping every 10s
-		call ListeningTimer.startPeriodic(listeningPeriod);//updating LED every 500ms
+		call SleepTimer.startPeriodic(10000);//every 10s go back to broadcast
+		call ListeningTimer.startPeriodic(100);//updating LED every 100ms
 		
 		channelCounter=0;
 		nextTime=1234;
@@ -82,31 +82,21 @@ implementation
 	}
 
 	event void SendingTimer.fired() {
-		unsigned char str[1024];
-		//call Leds.led0Toggle();
-		//dbg("AmIC","Should send data now");
-		
-		sprintf(str, "ID=%d : Sending a message type: %d", TOS_NODE_ID, myMsg->type);
-		call SerialImp.send(str,strlen(str));
-		
+		call Leds.led2Toggle();
 		if (!busy) {
-			//BlinkToRadioMsg* btrpkt = (BlinkToRadioMsg*)(call Packet.getPayload(&pkt, sizeof (BlinkToRadioMsg)));
 			if (call AMSend.send(AM_BROADCAST_ADDR, &pkt, sizeof(AmiMsg)) == SUCCESS) {
 				busy = TRUE;
 				dbg("AmIC","Message succesfuly sent");
 			}
 		}
-		call Leds.led1On();//reached end of sending
 	}
 
 	event void SleepTimer.fired() {
-		dbg("AmIC","Going to sleep now");
-		//call Leds.led2Toggle();
-		//sleep();
+		previousState=state;
+		state=BROADCAST;
 	}
 	/*LED UPDATOR*/
 	event void ListeningTimer.fired() {
-		call SerialImp.send("Updating LED",strlen("Updating LED"));
 		//unsigned char str[80];
 		//sprintf(str, "testNB %d", 10);
 		//call SerialImp.send(str,strlen(str));
@@ -119,24 +109,24 @@ implementation
 		}
 		switch(state){
 			case BROADCASTING:
-				//0blink
-				call Leds.led0Off();
-				call Leds.led2Toggle();
+				//01
+				call Leds.led0On();
+				call Leds.led1Off();
 				break;
 			case ANSWERING:
-				//01
+				//10
 				call Leds.led0Off();
-				call Leds.led2On();
+				call Leds.led1On();
 				break;
 			case CONFIRMING:
-				//10
-				call Leds.led0On();
-				call Leds.led2Off();
-				break;
-			case ACCEPTING:
 				//11
 				call Leds.led0On();
-				call Leds.led2On();
+				call Leds.led1On();
+				break;
+			case ACCEPTING:
+				//00
+				call Leds.led0Off();
+				call Leds.led1Off();
 				break;
 			case REJECTING:
 				break;
@@ -148,7 +138,6 @@ implementation
 
 	event void AMControl.startDone(error_t err) {
 		if (err == SUCCESS) {
-			dbg("AmIC","Will periodically send data");
 			call SendingTimer.startPeriodic(TIMER_PERIOD_MILLI);
 		}
 		else {
@@ -204,9 +193,20 @@ implementation
 				case CONFIRM:
 					if(btrpkt->id_receiver ==TOS_NODE_ID) {
 						if(previousState==ANSWERING) {
-							dbg("AmIC","I answered and I got a confirmation");
-							channelT[btrpkt->id_sender]=btrpkt->channel;
-							nextTimeT[btrpkt->id_sender]=btrpkt->nextTime;
+							if(pairT[btrpkt->id_sender]=FALSE) {
+								dbg("AmIC","I answered and I got a confirmation");
+								channelT[btrpkt->id_sender]=btrpkt->channel;
+								nextTimeT[btrpkt->id_sender]=btrpkt->nextTime;
+								/*Now i send acceptation*/
+								myMsg->id_sender = TOS_NODE_ID;
+								myMsg->id_receiver = btrpkt->id_sender;
+								myMsg->type = ACCEPT;
+							}else{
+								//Already paired. reject
+								myMsg->id_sender = TOS_NODE_ID;
+								myMsg->id_receiver = btrpkt->id_sender;
+								myMsg->type = REJECT;
+							}
 						}
 					} else {
 						dbg("AmIC","this confirmation is not for me");
