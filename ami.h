@@ -1,41 +1,28 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#ifndef AMI_H
+#define AMI_H
 
+//PARAMETERS
+enum {
+	AM_AMI = 6,
+	TIMER_PERIOD_MS = 250,
+	MOTE_NB = 5
+};
+//Message types
 typedef enum {
 	BROADCAST,
 	ANSWER,
 	CONFIRM,
 	ACCEPT,
 	REJECT} msg_type;
-
-typedef enum {ALREADY,TIMEOUT} reason;
-
+//mote states
 typedef enum {
 	IDLE=0,
 	BROADCASTING,
-	W_BROADCASTING,
-	ANSWERING,
-	W_ANSWERING,
-	CONFIRMING,
-	W_CONFIRMING,
-	ACCEPTING,
-	W_ACCEPTING,
-	REJECTING
+	WAIT_CONF,
+	UPDATE,
+	WAIT_REPONSE
 } mote_state;
-
-enum {
-  AM_AMI = 6,
-  TIMER_PERIOD_MILLI = 2500,
-  MAX_MOTE=10
-};
-
-typedef struct printmessage{
-	unsigned int moteID;
-	char* msg;
-	unsigned int msgLength;
-} PrintMsg;
-
+//AMI message
 typedef struct amimessage {
 	nx_uint16_t id_sender;
 	nx_uint16_t id_receiver;
@@ -43,8 +30,4 @@ typedef struct amimessage {
 	nx_uint16_t channel;
 	nx_uint16_t nextTime;
 } AmiMsg;
-
-typedef nx_struct BlinkToRadioMsg {
-	nx_uint16_t nodeid;
-	nx_uint16_t counter;
-} BlinkToRadioMsg;
+#endif

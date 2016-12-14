@@ -1,258 +1,106 @@
 #include "Timer.h"
 #include "ami.h"
 
-static uint8_t counter = 0;
 module AmIC @safe()
-{
-    uses interface Timer<TMilli> as SleepTimer;
-    uses interface Timer<TMilli> as ListeningTimer;
-    uses interface Timer<TMilli> as SendingTimer;
-    uses interface Leds;
-    uses interface Boot;
-    uses interface Random;
-    
-    //COMMUNICATION
-    uses interface Packet;
-    uses interface AMPacket;
-    uses interface AMSend;
-    uses interface SplitControl as AMControl;
-    uses interface SplitControl as SerialControl;
-    uses interface Receive;
-    uses interface UartStream as SerialImp;
+{  
+  uses interface Timer<TMilli> as Timer;
+  uses interface Leds;
+  uses interface Boot;
+  //messaging - sending
+  uses interface Packet;
+  uses interface AMPacket;
+  uses interface AMSend;
+  uses interface SplitControl as AMControl;
+  //messaging - receiving
+  uses interface Receive;
 }
 implementation
 {
-	//COMMUNICATION
-	bool busy = FALSE;
+	//GLOBAL VARIABLES
+	unsigned int cpt=0;
+	//for radio communication
+	bool busy=FALSE;
 	message_t pkt;
-	AmiMsg* myMsg;
-	unsigned int channelCounter;
-	unsigned int nextTime;
-	//STATES management
-	mote_state state=IDLE;
-	mote_state previousState=IDLE;
-	//PAIRING TABLE
-	bool pairT[20]={FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE};
-	nx_uint16_t channelT[20]={0,0,0,0,0 ,0,0,0,0,0 ,0,0,0,0,0 ,0,0,0,0,0};
-	nx_uint16_t nextTimeT[20]={0,0,0,0,0 ,0,0,0,0,0 ,0,0,0,0,0 ,0,0,0,0,0};
-	bool isPaired=FALSE;
-	//PERIODS
-	int listeningPeriod = 250;
-	//DEBUGGING
-	//int debugSize=2000;
-	//char *debugMsg;
-
-
+	//FUNCTION SIGNATURES
+	void setLed(const unsigned int value);
+	void allLedOff(void);
+	void allLedOn(void);
+	void sendMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime);
+	
 	event void Boot.booted(){
-		unsigned char str[1024];
-	
-		dbg("AmIc","Mote initialized");
-		call Leds.led0On();
-		call Leds.led1On();
-		call Leds.led2On();//all leds on while init
-		//Init radio
+		//start up the radio comm
 		call AMControl.start();
-		call SerialControl.start();
-		
-		//call SendingTimer.startPeriodic( 2000 ); //sending every 2sec
-		call SleepTimer.startPeriodic(10000);//every 10s go back to broadcast
-		call ListeningTimer.startPeriodic(100);//updating LED every 100ms
-		
-		channelCounter=0;
-		nextTime=1234;
-		
-		/*Defining default broadcast message*/
-		myMsg = (AmiMsg*)(call Packet.getPayload(&pkt, sizeof (AmiMsg)));
-		myMsg->id_sender = TOS_NODE_ID;
-		myMsg->id_receiver = 0;
-		myMsg->type = BROADCAST;
-		myMsg->channel = 0;
-		myMsg->nextTime = 0;
-		
-		//Broadcasting
-		previousState=state;
-		state=BROADCASTING;
-		
-		call Leds.led0Off();
-		call Leds.led1Off();
-		call Leds.led2Off();
-		
-		sprintf(str, "Mote initialized. ID=%d listenP=%d", TOS_NODE_ID, listeningPeriod);
-		call SerialImp.send(str,strlen(str));
 	}
 
-	event void SendingTimer.fired() {
-		call Leds.led2Toggle();
-		if (!busy) {
-			if (call AMSend.send(AM_BROADCAST_ADDR, &pkt, sizeof(AmiMsg)) == SUCCESS) {
-				busy = TRUE;
-				dbg("AmIC","Message succesfuly sent");
-			}
-		}
-	}
-
-	event void SleepTimer.fired() {
-		previousState=state;
-		state=BROADCAST;
-	}
-	/*LED UPDATOR*/
-	event void ListeningTimer.fired() {
-		//unsigned char str[80];
-		//sprintf(str, "testNB %d", 10);
-		//call SerialImp.send(str,strlen(str));
-		//call SerialImp.send("PRINTTTTTTT\n",strlen("PRINTTTTTTT\n"));
-		dbg("AmIC","UPDATE LEDS");
-		if(isPaired==FALSE) {
-			call Leds.led1Off();
-		} else {
-			call Leds.led1On();
-		}
-		switch(state){
-			case BROADCASTING:
-				//01
-				call Leds.led0On();
-				call Leds.led1Off();
-				break;
-			case ANSWERING:
-				//10
-				call Leds.led0Off();
-				call Leds.led1On();
-				break;
-			case CONFIRMING:
-				//11
-				call Leds.led0On();
-				call Leds.led1On();
-				break;
-			case ACCEPTING:
-				//00
-				call Leds.led0Off();
-				call Leds.led1Off();
-				break;
-			case REJECTING:
-				break;
-			default:
-			break;
-		}
+	event void Timer.fired(){
+		sendMessage(0,BROADCAST,0,0);
 	}
 	
-
+	//------------------------------------ Radio comm - emission ------------------------------------
 	event void AMControl.startDone(error_t err) {
 		if (err == SUCCESS) {
-			call SendingTimer.startPeriodic(TIMER_PERIOD_MILLI);
-		}
-		else {
+			call Timer.startPeriodic(TIMER_PERIOD_MS);
+		}else {
 			call AMControl.start();
 		}
 	}
 
 	event void AMControl.stopDone(error_t err) {
 	}
-
+	
 	event void AMSend.sendDone(message_t* msg, error_t error) {
 		if (&pkt == msg) {
 			busy = FALSE;
-			dbg("AmIC","Message sending --> OK");
 		}
 	}
-
+	
+	//------------------------------------ Radio comm - reception ------------------------------------
 	event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
-		call Leds.led1Toggle();
 		if (len == sizeof(AmiMsg)) {
-			AmiMsg* btrpkt = (AmiMsg*)payload;
-			switch(btrpkt->type){
-				case BROADCAST:
-					dbg("AmIC","Checking if mote is in the list");
-					if(pairT[btrpkt->id_sender]==FALSE) {
-						dbg("Mote is not in the list");
-						myMsg->id_sender = TOS_NODE_ID;
-						myMsg->id_receiver = btrpkt->id_sender;
-						myMsg->type = ANSWER;
-						previousState=state;
-						state=ANSWERING;
-					} else {
-						dbg("AmIC","Mote is in the list --> No action performed");
-					}
-					break;
-				case ANSWER:
-					if(btrpkt->id_receiver ==TOS_NODE_ID) {
-						dbg("AmIC","i was broadcasting and i got an answer");
-						/*Now i send confirmation*/
-						myMsg->id_sender = TOS_NODE_ID;
-						myMsg->id_receiver = btrpkt->id_sender;
-						myMsg->type = CONFIRM;
-						myMsg->channel =channelCounter;
-						channelCounter=channelCounter+1;
-						myMsg->nextTime=nextTime;
-						dbg("AmIC","I am confirming the linking");
-						previousState=state;
-						state=CONFIRMING;
-					} else {
-						dbg("AmIC","this answer is not for me");
-					}
-				break;
-				case CONFIRM:
-					if(btrpkt->id_receiver ==TOS_NODE_ID) {
-						if(previousState==ANSWERING) {
-							if(pairT[btrpkt->id_sender]=FALSE) {
-								dbg("AmIC","I answered and I got a confirmation");
-								channelT[btrpkt->id_sender]=btrpkt->channel;
-								nextTimeT[btrpkt->id_sender]=btrpkt->nextTime;
-								/*Now i send acceptation*/
-								myMsg->id_sender = TOS_NODE_ID;
-								myMsg->id_receiver = btrpkt->id_sender;
-								myMsg->type = ACCEPT;
-							}else{
-								//Already paired. reject
-								myMsg->id_sender = TOS_NODE_ID;
-								myMsg->id_receiver = btrpkt->id_sender;
-								myMsg->type = REJECT;
-							}
-						}
-					} else {
-						dbg("AmIC","this confirmation is not for me");
-					}
-				break;
-				case ACCEPT:
-					if(btrpkt->id_receiver ==TOS_NODE_ID) {
-						pairT[btrpkt->id_sender]=TRUE;
-						isPaired=TRUE;
-						dbg("AmIC","i add the sender to the pairing table");
-					} else {
-						dbg("AmIC","this acceptance is not for me");
-					}
-				break;
-				case REJECT:
-					if(btrpkt->id_receiver ==TOS_NODE_ID) {
-						pairT[btrpkt->id_sender]=FALSE;
-						dbg("AmIC","I got rejected");
-					} else {
-						dbg("AmIC","this rejection is not for me");
-					}
-				break;
-				default:
-				break;
-			}
-			//dbg("AmIc","Got a message");
-			//call Leds.set(btrpkt->counter);
+			AmiMsg* inMsg = (AmiMsg*)payload;
+			call Leds.set(inMsg->id_sender);
 		}
 		return msg;
 	}
 	
-	async event void SerialImp.sendDone(uint8_t* buf, uint16_t len, error_t error) {
+	//------------------------------------ My functions ------------------------------------
+	void setLed(const unsigned int value){
+		unsigned int scaledValue=value%8;
+		allLedOff();
+		if(scaledValue&1) {
+			call Leds.led0On();
+		}
+		if(scaledValue&2) {
+			call Leds.led1On();
+		}
+		if(scaledValue&4) {
+			call Leds.led2On();
+		}
+  }
+  
+	void allLedOff(void){
+		call Leds.led0Off();
+		call Leds.led1Off();
+		call Leds.led2Off();
+	}
+	void allLedOn(void){
+		call Leds.led0On();
+		call Leds.led1On();
+		call Leds.led2On();
 	}
 	
-	async event void SerialImp.receivedByte(uint8_t byte){
+	void sendMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime){
+		if (!busy) {
+			AmiMsg* msg = (AmiMsg*)(call Packet.getPayload(&pkt, sizeof(AmiMsg)));
+			msg->id_sender= TOS_NODE_ID;
+			msg->id_receiver= idReceiver;
+			msg->type=type;
+			msg->channel=channel;
+			msg->nextTime=nextTime;
+			if (call AMSend.send(AM_BROADCAST_ADDR, &pkt, sizeof(AmiMsg)) == SUCCESS) {
+				busy = TRUE;
+				call Leds.led2Toggle();
+			}
+		}
 	}
-	
-	async event void SerialImp.receiveDone(uint8_t* buf, uint16_t len, error_t error) {
-	
-	}
-	
-	event void SerialControl.startDone(error_t error) {
-	}
-	
-	event void SerialControl.stopDone(error_t error) {
-	}
-
 }
-
