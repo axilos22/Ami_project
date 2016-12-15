@@ -10,8 +10,10 @@ implementation
 	
 	//timer
 	components new TimerMilliC() as Timer;
+	components new TimerMilliC() as resetTimer;
 	//wiring
-	AmIC.Timer -> Timer;
+	AmIC.sendTimer -> Timer;
+	AmIC.resetTimer -> resetTimer;
 	
 	//radio comm - sending
 	components ActiveMessageC;

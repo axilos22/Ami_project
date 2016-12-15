@@ -5,7 +5,8 @@
 enum {
 	AM_AMI = 6,
 	TIMER_PERIOD_MS = 250,
-	MOTE_NB = 5
+	RESET_TIMER_MS = 3000,
+	MOTE_NB = 10
 };
 //Message types
 typedef enum {
@@ -17,10 +18,9 @@ typedef enum {
 //mote states
 typedef enum {
 	IDLE=0,
-	BROADCASTING,
-	WAIT_CONF,
-	UPDATE,
-	WAIT_REPONSE
+	BROADCASTING=1,
+	WAIT_CONF=2,
+	WAIT_RESPONSE=3
 } mote_state;
 //AMI message
 typedef struct amimessage {

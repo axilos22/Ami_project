@@ -3,7 +3,8 @@
 
 module AmIC @safe()
 {  
-  uses interface Timer<TMilli> as Timer;
+  uses interface Timer<TMilli> as sendTimer;
+  uses interface Timer<TMilli> as resetTimer;
   uses interface Leds;
   uses interface Boot;
   //messaging - sending
@@ -21,25 +22,62 @@ implementation
 	//for radio communication
 	bool busy=FALSE;
 	message_t pkt;
+	AmiMsg* outMsg;
+	//mote state
+	mote_state state=IDLE;
+	mote_state nextState=IDLE;
+	//mote tables
+	bool pairings[MOTE_NB];
+	unsigned int channels[MOTE_NB];
+	unsigned int nextTimes[MOTE_NB];
+	//mote default values
+	const unsigned int defaultChannel=118;
+	const unsigned int defaultNextTime=712;
 	//FUNCTION SIGNATURES
 	void setLed(const unsigned int value);
 	void allLedOff(void);
 	void allLedOn(void);
-	void sendMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime);
+	void setMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime);
+	void sendMessage();
+	void processMessage(AmiMsg* msg);
+	void updateState();
+	void updateTables(const unsigned int moteId, const unsigned int channel,const unsigned int nextTime);
 	
 	event void Boot.booted(){
+		int rank;
+		//init arrays
+		for(rank=0;rank<MOTE_NB;rank+=1) {
+			pairings[rank]=FALSE;
+			channels[rank]=0;
+			nextTimes[rank]=0;
+		}
+		//mote is paired with itself
+		pairings[TOS_NODE_ID]=TRUE;
 		//start up the radio comm
 		call AMControl.start();
+		//set the comm message
+		outMsg = (AmiMsg*)(call Packet.getPayload(&pkt, sizeof(AmiMsg)));
+		
+		setMessage(0,BROADCAST,0,0);
+		call resetTimer.startPeriodic(RESET_TIMER_MS);
 	}
-
-	event void Timer.fired(){
-		sendMessage(0,BROADCAST,0,0);
+	
+	event void resetTimer.fired(){
+		//reset the mote to initial state (robustness)
+		//the mote will perform a full pairing cycle only once every (this period)
+		state=IDLE;
+		nextState=BROADCASTING;
 	}
 	
 	//------------------------------------ Radio comm - emission ------------------------------------
+	event void sendTimer.fired(){
+		//setMessage(0,BROADCAST,0,0);
+		sendMessage();
+		updateState();
+	}
 	event void AMControl.startDone(error_t err) {
 		if (err == SUCCESS) {
-			call Timer.startPeriodic(TIMER_PERIOD_MS);
+			call sendTimer.startPeriodic(TIMER_PERIOD_MS);
 		}else {
 			call AMControl.start();
 		}
@@ -58,7 +96,7 @@ implementation
 	event message_t* Receive.receive(message_t* msg, void* payload, uint8_t len) {
 		if (len == sizeof(AmiMsg)) {
 			AmiMsg* inMsg = (AmiMsg*)payload;
-			call Leds.set(inMsg->id_sender);
+			processMessage(inMsg);
 		}
 		return msg;
 	}
@@ -66,7 +104,9 @@ implementation
 	//------------------------------------ My functions ------------------------------------
 	void setLed(const unsigned int value){
 		unsigned int scaledValue=value%8;
-		allLedOff();
+		//allLedOff();
+		call Leds.led0Off();
+		call Leds.led1Off();
 		if(scaledValue&1) {
 			call Leds.led0On();
 		}
@@ -89,18 +129,80 @@ implementation
 		call Leds.led2On();
 	}
 	
-	void sendMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime){
+	void sendMessage(){
 		if (!busy) {
-			AmiMsg* msg = (AmiMsg*)(call Packet.getPayload(&pkt, sizeof(AmiMsg)));
-			msg->id_sender= TOS_NODE_ID;
-			msg->id_receiver= idReceiver;
-			msg->type=type;
-			msg->channel=channel;
-			msg->nextTime=nextTime;
 			if (call AMSend.send(AM_BROADCAST_ADDR, &pkt, sizeof(AmiMsg)) == SUCCESS) {
 				busy = TRUE;
 				call Leds.led2Toggle();
 			}
 		}
+	}
+	
+	void processMessage(AmiMsg* msg){
+		unsigned int sender =msg->id_sender;
+		unsigned int receiver=msg->id_receiver;
+		msg_type type=msg->type;
+		switch(state){
+			case IDLE:
+				if(type==BROADCAST){
+					setMessage(sender,ANSWER,0,0);
+					nextState=WAIT_CONF;
+				}
+			break;
+			case BROADCASTING:
+				if(type==BROADCAST){
+					setMessage(sender,ANSWER,0,0);
+					nextState=WAIT_CONF;
+				}
+				if(type==ANSWER && receiver==TOS_NODE_ID){
+					setMessage(sender,CONFIRM,22,200);
+					nextState=WAIT_RESPONSE;
+				}
+			break;
+			case WAIT_CONF:
+				if(type==CONFIRM && receiver==TOS_NODE_ID){
+					if(pairings[sender]==FALSE){//I am not paired. it is ok
+						setMessage(sender,ACCEPT,defaultChannel,defaultNextTime);
+						updateTables(sender,msg->channel,msg->nextTime);
+						nextState=IDLE;
+					}else {//i am paired, i cant add you
+						setMessage(sender,REJECT,0,0);
+						nextState=IDLE;
+					}
+					
+				}
+			break;
+			case WAIT_RESPONSE:
+				if(type==ACCEPT && receiver==TOS_NODE_ID){
+					updateTables(sender,msg->channel,msg->nextTime);
+					nextState=IDLE;
+				}
+				if(type==REJECT && receiver==TOS_NODE_ID){
+					nextState=IDLE;
+				}
+			break;
+		}
+	}
+	
+	void setMessage(const unsigned int idReceiver,const msg_type type,const unsigned int channel,const unsigned int nextTime){
+		outMsg->id_sender= TOS_NODE_ID;
+		outMsg->id_receiver= idReceiver;
+		outMsg->type=type;
+		outMsg->channel=channel;
+		outMsg->nextTime=nextTime;
+	}
+	
+	void updateState(){
+		state=nextState;
+		//call Leds.set(state);
+		setLed(state);
+	}
+	
+	void updateTables(const unsigned int moteId, const unsigned int channel,const unsigned int nextTime){
+		pairings[moteId]=TRUE;
+		channels[moteId]=channel;
+		nextTimes[moteId]=nextTime;
+		//TODO add significant LED behavior to prove this point has been reached
+		//call sendTimer.stop();//stop sending data
 	}
 }
