@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "Timer.h"
 #include "ami.h"
 
@@ -14,6 +15,9 @@ module AmIC @safe()
   uses interface SplitControl as AMControl;
   //messaging - receiving
   uses interface Receive;
+  //serial port communication
+  uses interface UartStream as Serial;
+  uses interface SplitControl as SerialControl;
 }
 implementation
 {
@@ -34,6 +38,7 @@ implementation
 	const unsigned int defaultChannel=118;
 	const unsigned int defaultNextTime=712;
 	//FUNCTION SIGNATURES
+	void serialSendString(char* string);
 	void setLed(const unsigned int value);
 	void allLedOff(void);
 	void allLedOn(void);
@@ -60,6 +65,7 @@ implementation
 		
 		setMessage(0,BROADCAST,0,0);
 		call resetTimer.startPeriodic(RESET_TIMER_MS);
+		call SerialControl.start();
 	}
 	
 	event void resetTimer.fired(){
@@ -70,15 +76,16 @@ implementation
 	}
 	
 	//------------------------------------ Radio comm - emission ------------------------------------
-	event void sendTimer.fired(){
+	event void sendTimer.fired() {
 		//setMessage(0,BROADCAST,0,0);
 		sendMessage();
 		updateState();
 	}
+
 	event void AMControl.startDone(error_t err) {
 		if (err == SUCCESS) {
 			call sendTimer.startPeriodic(TIMER_PERIOD_MS);
-		}else {
+		} else {
 			call AMControl.start();
 		}
 	}
@@ -100,9 +107,35 @@ implementation
 		}
 		return msg;
 	}
+
+	//------------------------------------ Serial port control ------------------------------------ 
+	event void SerialControl.startDone(error_t error) {
+	}
+
+	event void SerialControl.stopDone(error_t error) {
+	}
+
+	//------------------------------------ Serial handling events ------------------------------------
+	async event void Serial.sendDone( uint8_t* buf, uint16_t len, error_t error )
+	{
+	}
+
+	async event void Serial.receivedByte( uint8_t byte )
+	{
+	}
+
+	async event void Serial.receiveDone( uint8_t* buf, uint16_t len, error_t error )
+	{
+	}
 	
 	//------------------------------------ My functions ------------------------------------
-	void setLed(const unsigned int value){
+	void serialSendString(char* string)
+	{
+		call Serial.send(string, strlen(string));
+	}
+
+	void setLed(const unsigned int value)
+	{
 		unsigned int scaledValue=value%8;
 		//allLedOff();
 		call Leds.led0Off();
@@ -110,26 +143,26 @@ implementation
 		if(scaledValue&1) {
 			call Leds.led0On();
 		}
-		if(scaledValue&2) {
+		else if(scaledValue&2) {
 			call Leds.led1On();
 		}
-		if(scaledValue&4) {
+		else if(scaledValue&4) {
 			call Leds.led2On();
 		}
-  }
+	}
   
-	void allLedOff(void){
+	void allLedOff(void) {
 		call Leds.led0Off();
 		call Leds.led1Off();
 		call Leds.led2Off();
 	}
-	void allLedOn(void){
+	void allLedOn(void) {
 		call Leds.led0On();
 		call Leds.led1On();
 		call Leds.led2On();
 	}
 	
-	void sendMessage(){
+	void sendMessage() {
 		if (!busy) {
 			if (call AMSend.send(AM_BROADCAST_ADDR, &pkt, sizeof(AmiMsg)) == SUCCESS) {
 				busy = TRUE;
@@ -137,11 +170,14 @@ implementation
 			}
 		}
 	}
-	
+
 	void processMessage(AmiMsg* msg){
 		unsigned int sender =msg->id_sender;
 		unsigned int receiver=msg->id_receiver;
-		msg_type type=msg->type;
+		msg_type type = msg->type;
+		char serialMessage[100];
+		sprintf(serialMessage, "Received message from the mote number %u\r\n", sender);
+		serialSendString(serialMessage);
 		switch(state){
 			case IDLE:
 				if(type==BROADCAST){
