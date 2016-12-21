@@ -131,7 +131,8 @@ implementation
 	//------------------------------------ My functions ------------------------------------
 	void serialSendString(char* string)
 	{
-		call Serial.send(string, strlen(string));
+		unsigned char* outStr = (unsigned char*)string;
+		call Serial.send(outStr, strlen(outStr));
 	}
 
 	void setLed(const unsigned int value)
@@ -172,12 +173,10 @@ implementation
 	}
 
 	void processMessage(AmiMsg* msg){
+		char serialMessage[100];
 		unsigned int sender =msg->id_sender;
 		unsigned int receiver=msg->id_receiver;
 		msg_type type = msg->type;
-		char serialMessage[100];
-		sprintf(serialMessage, "Received message from the mote number %u\r\n", sender);
-		serialSendString(serialMessage);
 		switch(state){
 			case IDLE:
 				if(type==BROADCAST){
@@ -204,6 +203,8 @@ implementation
 					}else {//i am paired, i cant add you
 						setMessage(sender,REJECT,0,0);
 						nextState=IDLE;
+						sprintf(serialMessage, "[%d]Pairing already exists, rejecting\n",TOS_NODE_ID);
+						serialSendString(serialMessage);
 					}
 					
 				}
@@ -212,9 +213,13 @@ implementation
 				if(type==ACCEPT && receiver==TOS_NODE_ID){
 					updateTables(sender,msg->channel,msg->nextTime);
 					nextState=IDLE;
+					sprintf(serialMessage, "[%d]Pairing accepted\n",TOS_NODE_ID);
+					serialSendString(serialMessage);
 				}
 				if(type==REJECT && receiver==TOS_NODE_ID){
 					nextState=IDLE;
+					sprintf(serialMessage, "[%d]Pairing rejected\n",TOS_NODE_ID);
+					serialSendString(serialMessage);
 				}
 			break;
 		}
@@ -229,12 +234,18 @@ implementation
 	}
 	
 	void updateState(){
+		char serialMessage[100];
+		sprintf(serialMessage, "[%d]State %d --> %d\n",TOS_NODE_ID,state,nextState);
+		if(state!=nextState)
+			serialSendString(serialMessage);
 		state=nextState;
 		//call Leds.set(state);
 		setLed(state);
 	}
 	
 	void updateTables(const unsigned int moteId, const unsigned int channel,const unsigned int nextTime){
+		char serialMessage[100];
+		sprintf(serialMessage, "[%d]Updating pairing table\n",TOS_NODE_ID);
 		pairings[moteId]=TRUE;
 		channels[moteId]=channel;
 		nextTimes[moteId]=nextTime;

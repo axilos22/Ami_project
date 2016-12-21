@@ -28,7 +28,7 @@ implementation
 	components new AMReceiverC(AM_AMI);
 	//wiring
 	AmIC.Receive -> AMReceiverC;
-
+	//Printing
 	components SerialActiveMessageC, PlatformSerialC;
 	AmIC.Serial -> PlatformSerialC;
 	AmIC.SerialControl -> SerialActiveMessageC;
