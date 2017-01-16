@@ -15,6 +15,11 @@ IDLE state (LED1 and LED0 off) and BROADCASTING state (LED0 on, LED1 off).
 
 -The motes should now communicate and the change of state should be visible.
 
+#Debugging
+-A subroutine has been implemented allowing to print information on the USB1 port. The commands to run are stored into "output.sh".
+
+-Running the script directly may have some unexpected behavior, so it is safer to execute these two commands in a terminal.
+
 #Troubleshooting
 -The mote only pair once.
 It is normal that the pairing only happend once. A paired mote will automatically refuse any pairing with an already paired mote.
